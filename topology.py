@@ -45,7 +45,7 @@ class TopologicalAnomalyDetector(nn.Module):
     def __init__(self, window_size=288):
         super(TopologicalAnomalyDetector, self).__init__()
         self.sublevel = CubicalComplex(dim=1, superlevel=False)
-        self.wasserstein = WassersteinDistance()
+        self.wasserstein = WassersteinDistance(q=2)
         
         # Sliding window for reference PD estimation
         self.window_size = window_size
@@ -60,7 +60,7 @@ class TopologicalAnomalyDetector(nn.Module):
         Returns persistence diagrams from sub-level-set filtration on kappa.
         """
         # Treat the sorted 1D signal as a cubical complex for differentiable persistence
-        kappa_1d = kappa_current.unsqueeze(0).unsqueeze(0)   # (1, 1, num_edges)
+        kappa_1d = kappa_current.unsqueeze(0)                 # (1, num_edges)
         diagrams = self.sublevel(kappa_1d)
         return diagrams
         

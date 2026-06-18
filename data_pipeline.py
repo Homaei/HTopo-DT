@@ -4,6 +4,135 @@ import pandas as pd
 import numpy as np
 import wntr
 import networkx as nx
+import urllib.request
+import zipfile
+import shutil
+
+def download_datasets(dataset_dir="dataset"):
+    """
+    Downloads all required datasets into `dataset_dir/`:
+      - BATADAL_train07.csv        (SCADA training data with attack labels)
+      - BATADAL_test_dataset.csv   (SCADA test data with ground-truth labels)
+      - ctown.inp                  (C-Town EPANET hydraulic model)
+
+    C-Town INP priority:
+      1. Extract from installed wntr package (fastest, no network needed)
+      2. Download BATADAL zip from GitHub (contains both CSVs)
+      3. Fall back to direct CSV URLs
+
+    Usage:
+        from data_pipeline import download_datasets
+        download_datasets("dataset")
+    """
+    os.makedirs(dataset_dir, exist_ok=True)
+
+    # ── Helper ────────────────────────────────────────────────────────────────
+    def _fetch(url, dest):
+        print(f"  Downloading {os.path.basename(dest)} ...", end=" ", flush=True)
+        try:
+            urllib.request.urlretrieve(url, dest)
+            print(f"OK  ({os.path.getsize(dest)/1024:.1f} KB)")
+            return True
+        except Exception as e:
+            print(f"FAILED  ({e})")
+            if os.path.exists(dest):
+                os.remove(dest)
+            return False
+
+    # ── Step 1: C-Town INP from wntr package ─────────────────────────────────
+    ctown_dest = os.path.join(dataset_dir, "ctown.inp")
+    if not os.path.exists(ctown_dest):
+        print("[1/2] C-Town EPANET model (ctown.inp)")
+        _found = False
+        try:
+            import wntr as _wntr
+            _wntr_dir = os.path.dirname(_wntr.__file__)
+            _candidates = ["ctown.inp", "CTown.inp", "ctown_density.inp"]
+            for _root, _, _files in os.walk(_wntr_dir):
+                for _candidate in _candidates:
+                    if _candidate.lower() in [f.lower() for f in _files]:
+                        _src = os.path.join(_root, _candidate)
+                        shutil.copy(_src, ctown_dest)
+                        print(f"  Copied from wntr: {_src}  →  {ctown_dest}  OK")
+                        _found = True
+                        break
+                if _found:
+                    break
+        except ImportError:
+            pass
+
+        if not _found:
+            print("  wntr package not found — downloading Net3 as meshed-network placeholder ...")
+            _fetch(
+                "https://raw.githubusercontent.com/OpenWaterAnalytics/EPANET/dev/example-networks/Net3.inp",
+                ctown_dest
+            )
+    else:
+        print(f"[1/2] ctown.inp already exists, skipping.")
+
+    # ── Step 2: BATADAL CSVs ──────────────────────────────────────────────────
+    print("[2/2] BATADAL datasets")
+    train_dest = os.path.join(dataset_dir, "BATADAL_train07.csv")
+    test_dest  = os.path.join(dataset_dir, "BATADAL_test_dataset.csv")
+
+    both_exist = os.path.exists(train_dest) and os.path.exists(test_dest)
+    if both_exist:
+        print("  BATADAL CSVs already exist, skipping.")
+    else:
+        # Try zip archive first
+        _zip_url = "https://github.com/seanlaw/batadal/archive/refs/heads/master.zip"
+        _zip_tmp = os.path.join(dataset_dir, "_batadal_tmp.zip")
+        _zip_ok = _fetch(_zip_url, _zip_tmp)
+
+        if _zip_ok:
+            try:
+                with zipfile.ZipFile(_zip_tmp, "r") as z:
+                    for member in z.namelist():
+                        fname = os.path.basename(member)
+                        if fname in ("BATADAL_train07.csv", "BATADAL_test_dataset.csv"):
+                            dest = os.path.join(dataset_dir, fname)
+                            with z.open(member) as src, open(dest, "wb") as dst:
+                                shutil.copyfileobj(src, dst)
+                            print(f"  Extracted {fname}  ({os.path.getsize(dest)/1024:.1f} KB)  OK")
+            except Exception as e:
+                print(f"  Zip extraction failed: {e}")
+            finally:
+                if os.path.exists(_zip_tmp):
+                    os.remove(_zip_tmp)
+
+        # Fall back to direct URLs if zip failed
+        if not os.path.exists(train_dest):
+            _fetch(
+                "https://raw.githubusercontent.com/seanlaw/batadal/master/data/BATADAL_train07.csv",
+                train_dest
+            )
+        if not os.path.exists(test_dest):
+            _fetch(
+                "https://raw.githubusercontent.com/seanlaw/batadal/master/data/BATADAL_test_dataset.csv",
+                test_dest
+            )
+
+    # ── Verify ────────────────────────────────────────────────────────────────
+    print("\n── Verification ──────────────────────────")
+    all_ok = True
+    for fname in ["ctown.inp", "BATADAL_train07.csv", "BATADAL_test_dataset.csv"]:
+        path = os.path.join(dataset_dir, fname)
+        if os.path.exists(path):
+            print(f"  ✅  {fname:<38} {os.path.getsize(path)/1024:>8.1f} KB")
+        else:
+            print(f"  ❌  {fname:<38} MISSING")
+            all_ok = False
+
+    print()
+    if all_ok:
+        print(f"All files ready in: {os.path.abspath(dataset_dir)}/")
+    else:
+        print("Some files missing — check errors above.")
+        print("Manual sources:")
+        print("  BATADAL : https://github.com/seanlaw/batadal")
+        print("  C-Town  : pip install wntr  (bundled inside the package)")
+
+    return all_ok
 
 def parse_batadal(filepath):
     """
@@ -171,3 +300,8 @@ def generate_epanet_apt(inp_filepath, output_dir, num_attacks=120, max_deviation
         print(f"Successfully generated APT datasets at {out_file}")
     else:
         print("Failed to generate any stealthy attack scenarios.")
+
+if __name__ == "__main__":
+    import sys
+    target = sys.argv[1] if len(sys.argv) > 1 else "dataset"
+    download_datasets(target)
