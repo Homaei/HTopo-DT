@@ -8,6 +8,34 @@ try:
 except ImportError:
     TOPO_AVAILABLE = False
 
+if TOPO_AVAILABLE:
+    import gudhi
+    def _cubical_complex_forward_patch(self, x):
+        if self.superlevel:
+            x = -x
+        
+        # FIX: gudhi 3.12.0 strictly requires lists for dimensions and array
+        dimensions = list(x.shape)
+        # Handle 0D tensors explicitly if needed, but x.shape is typical
+        array = x.flatten().detach().cpu().numpy().tolist()
+
+        cubical_complex = gudhi.CubicalComplex(
+            dimensions=dimensions,
+            top_dimensional_cells=array
+        )
+
+        cubical_complex.persistence()
+        cofaces = cubical_complex.cofaces_of_persistence_pairs()
+
+        max_dim = len(x.shape)
+        persistence_information = [
+            self._extract_generators_and_diagrams(x, cofaces, dim) 
+            for dim in range(0, max_dim)
+        ]
+        return persistence_information
+
+    CubicalComplex._forward = _cubical_complex_forward_patch
+
 if not TOPO_AVAILABLE:
     raise ImportError(
         "torch_topological is required for HTopo-DT's differentiable persistence loss (C3). "
@@ -121,9 +149,7 @@ class HTopoClassifier(nn.Module):
         
         c_mapped = self.c_map(c_graph)
         
-        if topo_score.dim() == 0:
-            topo_score = topo_score.view(1, 1)
-            
+        topo_score = topo_score.view(1, -1)
         x = torch.cat([z_graph, c_mapped, topo_score], dim=-1)
         logits = self.mlp(x)
         return logits
