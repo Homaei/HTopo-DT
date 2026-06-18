@@ -4,7 +4,6 @@ from collections import deque
 
 try:
     from torch_topological.nn import WassersteinDistance, CubicalComplex
-    from torch_topological.nn import VietorisRipsComplex
     TOPO_AVAILABLE = True
 except ImportError:
     TOPO_AVAILABLE = False
