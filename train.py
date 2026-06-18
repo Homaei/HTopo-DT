@@ -36,7 +36,6 @@ def compute_physics_loss(h0_new, h1_new, curl_edge, A_inc, A_loop, d, nominal_fl
     Q_hat = nominal_flows.unsqueeze(1)
     uncertainty_width = (Q_max - Q_min).unsqueeze(1) + epsilon_s
     
-    # (Removed Q_with_curl per Bug 4)
     
     loss_uncertainty = torch.sum(((Q_hat - Q) ** 2) / (uncertainty_width ** 2))
     
