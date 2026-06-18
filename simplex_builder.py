@@ -15,10 +15,8 @@ def build_simplex_backbone(inp_filepath, tau_1=0.0, tau_2=0.0, tau_3=0.0):
     wn = wntr.network.WaterNetworkModel(inp_filepath)
     
     G = nx.Graph()
-    G_directed = wn.get_graph() # Used to preserve edge directions for A_inc, A_loop
     
     node_to_idx = {name: idx for idx, name in enumerate(wn.node_name_list)}
-    idx_to_node = {idx: name for name, idx in node_to_idx.items()}
     
     # Store nominal couplings
     kappa_nominal = {}
@@ -108,6 +106,9 @@ def build_simplex_backbone(inp_filepath, tau_1=0.0, tau_2=0.0, tau_3=0.0):
     edges_list = list(sc.skeleton(1))
     edge_to_idx = {frozenset(e): idx for idx, e in enumerate(edges_list)}
     
+    sc_nodes = list(sc.skeleton(0))
+    node_to_row = {list(s)[0]: idx for idx, s in enumerate(sc_nodes)}
+    
     # Construct A_loop (loops x edges)
     row_idx = []
     col_idx = []
@@ -126,10 +127,9 @@ def build_simplex_backbone(inp_filepath, tau_1=0.0, tau_2=0.0, tau_3=0.0):
                 # Here we just assign +1 or -1 based on traversal direction vs node order
                 # For a simple representation, we assume uniform orientation or matching B1
                 
-                # Check orientation in B1
-                # B1 is nodes x edges
-                # B1[u, e_idx] will be -1 (source) and B1[v, e_idx] will be +1 (target)
-                b1_u = B1_scipy[u, e_idx]
+                # Check orientation in B1 using proper row mapping
+                row_u = node_to_row[u]
+                b1_u = B1_scipy[row_u, e_idx]
                 
                 if b1_u == -1: # u is source, traversed in direction
                     sign = 1.0

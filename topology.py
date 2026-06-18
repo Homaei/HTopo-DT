@@ -3,17 +3,19 @@ import torch.nn as nn
 from collections import deque
 
 try:
-    from torch_topological.nn import WassersteinDistance
+    from torch_topological.nn import WassersteinDistance, CubicalComplex
     from torch_topological.nn import VietorisRipsComplex
+    TOPO_AVAILABLE = True
 except ImportError:
-    class WassersteinDistance(nn.Module):
-        def forward(self, pd1, pd2):
-            return torch.tensor(0.0, requires_grad=True)
-    class VietorisRipsComplex(nn.Module):
-        def __init__(self, **kwargs):
-            super().__init__()
-        def forward(self, x):
-            return []
+    TOPO_AVAILABLE = False
+
+if not TOPO_AVAILABLE:
+    raise ImportError(
+        "torch_topological is required for HTopo-DT's differentiable persistence loss (C3). "
+        "Install it with: pip install torch-topological\n"
+        "Without it, the topological objective (Eq. 16) cannot be computed and "
+        "Theorem 1's detectability guarantee does not hold."
+    )
 
 class HodgeDecomposition(nn.Module):
     """
@@ -43,15 +45,24 @@ class TopologicalAnomalyDetector(nn.Module):
     """
     def __init__(self, window_size=288):
         super(TopologicalAnomalyDetector, self).__init__()
-        self.vr_complex = VietorisRipsComplex(dim=2)
+        self.sublevel = CubicalComplex(dim=1, superlevel=False)
         self.wasserstein = WassersteinDistance()
         
         # Sliding window for reference PD estimation
         self.window_size = window_size
         self.normal_diagrams_history = deque(maxlen=window_size)
         
-    def forward(self, node_features, kappa_ij):
-        diagrams = self.vr_complex(node_features)
+        # Learned non-negative weights ω_k for k=0,1,2  (paper Eq. 16)
+        self.omega = nn.Parameter(torch.ones(3))
+        
+    def forward(self, kappa_current):
+        """
+        kappa_current: (num_edges,) tensor of current hydraulic coupling weights.
+        Returns persistence diagrams from sub-level-set filtration on kappa.
+        """
+        # Treat the sorted 1D signal as a cubical complex for differentiable persistence
+        kappa_1d = kappa_current.unsqueeze(0).unsqueeze(0)   # (1, 1, num_edges)
+        diagrams = self.sublevel(kappa_1d)
         return diagrams
         
     def update_reference(self, normal_diagram):
@@ -70,19 +81,20 @@ class TopologicalAnomalyDetector(nn.Module):
         mid_idx = len(history) // 2
         return history[mid_idx]  # temporal median — stable and cheap
         
-    def compute_loss(self, diagrams_current, diagrams_reference=None, weights=[1.0, 1.0, 1.0]):
+    def compute_loss(self, diagrams_current, diagrams_reference=None):
         if diagrams_reference is None:
             diagrams_reference = self.get_reference_diagram()
-            if diagrams_reference is None:
-                return torch.tensor(0.0, requires_grad=True, device=diagrams_current[0].diagram.device if diagrams_current else 'cpu')
+        if diagrams_reference is None:
+            return torch.tensor(0.0, device=self.omega.device)
                 
-        loss = 0.0
+        omega = torch.nn.functional.softplus(self.omega)
+        loss = torch.tensor(0.0, device=omega.device)
         for dim in range(min(len(diagrams_current), len(diagrams_reference))):
             pd_curr = diagrams_current[dim].diagram
             pd_ref = diagrams_reference[dim].diagram
             
             w_dist = self.wasserstein(pd_curr, pd_ref)
-            loss += weights[dim] * (w_dist ** 2)
+            loss = loss + omega[dim] * (w_dist ** 2)
             
         return loss
 
@@ -90,19 +102,17 @@ class HTopoClassifier(nn.Module):
     """
     Final MLP classifier.
     """
-    def __init__(self, out_dim, num_classes=5):
+    def __init__(self, out_dim, tri_dim, num_classes=5):
         super(HTopoClassifier, self).__init__()
-        # c_tri acts as the primary loop-anomaly signal. We map it to the same dim.
-        # This implementation aligns with the fix to include c(t) directly.
+        self.c_map = nn.Linear(tri_dim, out_dim)
         self.mlp = nn.Sequential(
-            nn.Linear(out_dim * 2 + 1, 64), # z + c_tri_mapped + topo_score
+            nn.Linear(out_dim * 2 + 1, 64),
             nn.ReLU(),
             nn.Dropout(0.2),
             nn.Linear(64, 32),
             nn.ReLU(),
             nn.Linear(32, num_classes)
         )
-        self.c_map = nn.Linear(out_dim, out_dim)
         
     def forward(self, z, c_tri, topo_score):
         # We need to broadcast/pool features appropriately

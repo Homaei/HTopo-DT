@@ -31,51 +31,53 @@ class DynamicWeightedLaplacians(nn.Module):
         self.register_buffer('B2', B2)
         self.register_buffer('B3', B3)
         
-    def _sparse_diag_mul(self, sparse_mat, diag_vec):
+    def _left_diag_mul(self, diag_vec, sparse_mat):
         if sparse_mat.is_sparse:
             indices = sparse_mat._indices()
-            values = sparse_mat._values()
-            
-            if sparse_mat.shape[1] == diag_vec.shape[0]: 
-                new_values = values * diag_vec[indices[1]]
-            else: 
-                new_values = values * diag_vec[indices[0]]
-            
-            return torch.sparse_coo_tensor(indices, new_values, sparse_mat.shape)
+            values = sparse_mat._values() * diag_vec[indices[0]]
+            return torch.sparse_coo_tensor(indices, values, sparse_mat.shape).coalesce()
         else:
-            if sparse_mat.shape[1] == diag_vec.shape[0]:
-                return sparse_mat * diag_vec.unsqueeze(0)
-            else:
-                return sparse_mat * diag_vec.unsqueeze(1)
+            return sparse_mat * diag_vec.unsqueeze(1)
+
+    def _right_diag_mul(self, sparse_mat, diag_vec):
+        if sparse_mat.is_sparse:
+            indices = sparse_mat._indices()
+            values = sparse_mat._values() * diag_vec[indices[1]]
+            return torch.sparse_coo_tensor(indices, values, sparse_mat.shape).coalesce()
+        else:
+            return sparse_mat * diag_vec.unsqueeze(0)
             
     def forward(self, W0, W1, W2, W3):
         W0_inv = 1.0 / (W0 + 1e-6)
         W1_inv = 1.0 / (W1 + 1e-6)
         W2_inv = 1.0 / (W2 + 1e-6)
         
-        temp = self._sparse_diag_mul(self.B1, W1)
-        temp_dense = torch.sparse.mm(temp, self.B1.t().to_dense())
-        L0_w = temp_dense * W0_inv.unsqueeze(1)
+        # L0_w = W0_inv · B1 · diag(W1) · B1^T
+        tmp = self._right_diag_mul(self.B1, W1)
+        tmp = torch.sparse.mm(tmp, self.B1.t())
+        L0_w = self._left_diag_mul(W0_inv, tmp)
         
-        term1 = self._sparse_diag_mul(self.B1.t(), W0)
-        term1_dense = torch.sparse.mm(term1, self.B1.to_dense())
-        term1 = term1_dense * W1_inv.unsqueeze(1) 
+        # L1_w = W1_inv · B1^T · diag(W0) · B1  +  B2 · diag(W2) · B2^T · W1_inv
+        tmp1 = self._left_diag_mul(W0, self.B1)
+        tmp1 = torch.sparse.mm(self.B1.t(), tmp1)
+        term1 = self._left_diag_mul(W1_inv, tmp1)
         
-        term2 = self._sparse_diag_mul(self.B2, W2)
-        term2_dense = torch.sparse.mm(term2, self.B2.t().to_dense())
-        term2 = term2_dense * W1_inv.unsqueeze(1) 
+        tmp2 = self._right_diag_mul(self.B2, W2)
+        tmp2 = torch.sparse.mm(tmp2, self.B2.t())
+        term2 = self._right_diag_mul(tmp2, W1_inv)
         
         L1_w = term1 + term2
         
-        term1_2 = self._sparse_diag_mul(self.B2.t(), W1)
-        term1_2_dense = torch.sparse.mm(term1_2, self.B2.to_dense())
-        term1_2 = term1_2_dense * W2_inv.unsqueeze(1)
+        # L2_w = W2_inv · B2^T · diag(W1) · B2  +  B3 · diag(W3) · B3^T · W2_inv
+        tmp3 = self._left_diag_mul(W1, self.B2)
+        tmp3 = torch.sparse.mm(self.B2.t(), tmp3)
+        term3 = self._left_diag_mul(W2_inv, tmp3)
         
-        term2_2 = self._sparse_diag_mul(self.B3, W3)
-        term2_2_dense = torch.sparse.mm(term2_2, self.B3.t().to_dense())
-        term2_2 = term2_2_dense * W2_inv.unsqueeze(1)
+        tmp4 = self._right_diag_mul(self.B3, W3)
+        tmp4 = torch.sparse.mm(tmp4, self.B3.t())
+        term4 = self._right_diag_mul(tmp4, W2_inv)
         
-        L2_w = term1_2 + term2_2
+        L2_w = term3 + term4
         
         return L0_w, L1_w, L2_w
 
@@ -83,23 +85,25 @@ class SimplicialMessagePassing(nn.Module):
     """
     Implements simplicial message passing across nodes, edges, triangles.
     """
-    def __init__(self, node_dim, edge_dim, tri_dim):
+    def __init__(self, node_dim, edge_dim, tri_dim, num_layers=3):
         super(SimplicialMessagePassing, self).__init__()
-        self.node_proj = nn.Linear(node_dim, node_dim)
-        self.edge_proj = nn.Linear(edge_dim, edge_dim)
-        self.tri_proj = nn.Linear(tri_dim, tri_dim)
+        self.num_layers = num_layers
+        self.node_projs = nn.ModuleList([nn.Linear(node_dim, node_dim) for _ in range(num_layers)])
+        self.edge_projs = nn.ModuleList([nn.Linear(edge_dim, edge_dim) for _ in range(num_layers)])
+        self.tri_projs = nn.ModuleList([nn.Linear(tri_dim, tri_dim) for _ in range(num_layers)])
         
     def forward(self, h0, h1, h2, L0_w, L1_w, L2_w):
-        h0_new = self.node_proj(h0) + torch.mm(L0_w, h0)
-        h0_new = F.relu(h0_new)
-        
-        h1_new = self.edge_proj(h1) + torch.mm(L1_w, h1)
-        h1_new = F.relu(h1_new)
-        
-        h2_new = self.tri_proj(h2) + torch.mm(L2_w, h2)
-        h2_new = F.relu(h2_new)
-        
-        return h0_new, h1_new, h2_new
+        for l in range(self.num_layers):
+            h0 = self.node_projs[l](h0) + torch.mm(L0_w, h0)
+            h0 = F.relu(h0)
+            
+            h1 = self.edge_projs[l](h1) + torch.mm(L1_w, h1)
+            h1 = F.relu(h1)
+            
+            h2 = self.tri_projs[l](h2) + torch.mm(L2_w, h2)
+            h2 = F.relu(h2)
+            
+        return h0, h1, h2
 
 class CrossLevelFusion(nn.Module):
     """
@@ -145,9 +149,10 @@ class CrossLevelFusion(nn.Module):
         
         # For true multi-head attention over the 3 aggregated vectors (h0, e_agg, t_agg):
         # We treat each node as having a sequence of 3 items
-        seq = torch.stack([self.q_proj(h0), e_agg_raw, t_agg_raw], dim=1) # (N, 3, out_dim)
+        h0_proj = self.q_proj(h0)
+        seq = torch.stack([h0_proj, e_agg_raw, t_agg_raw], dim=1) # (N, 3, out_dim)
         
-        Q = self.q_proj(h0).unsqueeze(1) # (N, 1, out_dim)
+        Q = h0_proj.unsqueeze(1) # (N, 1, out_dim)
         K = self.k_proj(seq) # (N, 3, out_dim)
         V = self.v_proj(seq) # (N, 3, out_dim)
         

@@ -77,7 +77,7 @@ def train_epoch(model, dataloader, optimizer, A_inc, A_loop, pd_ref_dict, device
         
         optimizer.zero_grad()
         
-        logits, h1_new, curl_edge, diagrams_curr, topo_score = model(
+        logits, h0_new, h1_new, curl_edge, diagrams_curr, topo_score = model(
             x_stream, W0, kappa_current, phi_2_current, W3, Q_ij, Q_width, pd_ref_dict
         )
         
@@ -85,14 +85,7 @@ def train_epoch(model, dataloader, optimizer, A_inc, A_loop, pd_ref_dict, device
         l_ce = ce_loss_fn(logits, labels)
         l_topo = topo_score
         
-        # h0_new is accessible inside the model, but we need it for energy balance.
-        # Alternatively, the energy balance A_loop @ dh operates on the predicted heads.
-        # We assume the model exposes or calculates h0_new, let's extract it from model if needed,
-        # or we just assume we pass the true input heads x_stream for the physical loss.
-        # Assuming x_stream's last step represents current head:
-        h_current = x_stream[:, :, -1].squeeze(0).unsqueeze(-1) # (N, 1)
-        
-        l_phys = compute_physics_loss(h_current, h1_new, curl_edge, A_inc, A_loop, node_demands, nominal_flows, Q_min, Q_max)
+        l_phys = compute_physics_loss(h0_new, h1_new, curl_edge, A_inc, A_loop, node_demands, nominal_flows, Q_min, Q_max)
         
         loss = l_ce + lambda_topo * l_topo + lambda_phys * l_phys
         

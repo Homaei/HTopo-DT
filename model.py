@@ -22,15 +22,15 @@ class HTopoDT(nn.Module):
         
         # Edge initialization expects 2 channels: [Q_ij, Q_width]
         self.edge_init = nn.Linear(2, edge_dim)
-        self.tri_init = nn.Linear(edge_dim * 3, tri_dim)
+        self.tri_init = nn.Linear(edge_dim, tri_dim)
         
         self.dynamic_laplacians = DynamicWeightedLaplacians(B1, B2, B3)
-        self.smp = SimplicialMessagePassing(node_dim, edge_dim, tri_dim)
+        self.smp = SimplicialMessagePassing(node_dim, edge_dim, tri_dim, num_layers=3)
         self.fusion = CrossLevelFusion(node_dim, edge_dim, tri_dim, out_dim)
         self.hodge = HodgeDecomposition(B2)
         self.topo_detector = TopologicalAnomalyDetector()
         
-        self.classifier = HTopoClassifier(out_dim, num_classes)
+        self.classifier = HTopoClassifier(out_dim, tri_dim, num_classes)
         
     def _init_simplices(self, Q_ij, Q_width, h0=None):
         """
@@ -71,7 +71,7 @@ class HTopoDT(nn.Module):
         # Assuming we can aggregate c_tri to nodes via B1 and B2, or keep it graph level.
         # Here we follow the logic: c_tri is primarily used as the classifier input.
         
-        diagrams_curr = self.topo_detector(z.unsqueeze(0), W1)
+        diagrams_curr = self.topo_detector(kappa_current)
         
         topo_score = torch.tensor([0.0], device=z.device)
         if pd_ref is not None:
@@ -79,4 +79,4 @@ class HTopoDT(nn.Module):
             
         logits = self.classifier(z, c_tri, topo_score)
         
-        return logits, h1_new, curl_edge, diagrams_curr, topo_score
+        return logits, h0_new, h1_new, curl_edge, diagrams_curr, topo_score

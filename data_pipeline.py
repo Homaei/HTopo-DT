@@ -108,10 +108,18 @@ def generate_epanet_apt(inp_filepath, output_dir, num_attacks=120, max_deviation
         for target in targets:
             if target in pump_names:
                 pump = wn_attack.get_link(target)
-                pump.base_speed = pump.base_speed * random.uniform(1.1, 1.4)
+                original_speed = pump.base_speed if hasattr(pump, 'base_speed') else 1.0
+                delta = np.random.uniform(-0.15, 0.15)
+                pump.base_speed = max(0.1, original_speed + delta)
             elif target in valve_names:
                 valve = wn_attack.get_link(target)
-                valve.initial_setting = valve.initial_setting * random.uniform(0.5, 0.8)
+                if hasattr(valve, 'setting') and valve.setting is not None:
+                    original_setting = valve.setting
+                    delta = np.random.uniform(-0.1, 0.1) * original_setting
+                    valve.setting = max(0.0, original_setting + delta)
+                elif hasattr(valve, 'initial_status'):
+                    from wntr.network import LinkStatus
+                    valve.initial_status = LinkStatus.Closed if valve.initial_status == LinkStatus.Open else LinkStatus.Open
                 
         sim_attack = wntr.sim.EpanetSimulator(wn_attack)
         try:
