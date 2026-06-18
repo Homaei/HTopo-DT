@@ -63,12 +63,12 @@ class TopologicalAnomalyDetector(nn.Module):
     def get_reference_diagram(self):
         """
         Estimates PD_k* from the sliding window.
-        For simplicity in this mock, we can return the average or the most recent.
-        Ideally, we compute the Frechet mean of diagrams in the window.
         """
         if len(self.normal_diagrams_history) == 0:
             return None
-        return self.normal_diagrams_history[-1] # Simplification
+        history = list(self.normal_diagrams_history)
+        mid_idx = len(history) // 2
+        return history[mid_idx]  # temporal median — stable and cheap
         
     def compute_loss(self, diagrams_current, diagrams_reference=None, weights=[1.0, 1.0, 1.0]):
         if diagrams_reference is None:

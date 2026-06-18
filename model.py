@@ -49,7 +49,8 @@ class HTopoDT(nn.Module):
         return h1, h2
 
     def forward(self, x_stream, W0, kappa_current, phi_2_current, W3, Q_ij, Q_width, pd_ref=None):
-        h0 = self.tcn(x_stream)
+        x_windowed = x_stream.permute(0, 2, 1)  # (N, C, T)
+        h0 = self.tcn(x_windowed)
         
         h1, h2 = self._init_simplices(Q_ij, Q_width, h0)
         

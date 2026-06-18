@@ -105,12 +105,13 @@ def generate_epanet_apt(inp_filepath, output_dir, num_attacks=120, max_deviation
         k = min(num_attack_components, len(actuator_names))
         targets = random.sample(actuator_names, k)
         
-        # Conceptual manipulation applied here
         for target in targets:
             if target in pump_names:
                 pump = wn_attack.get_link(target)
+                pump.base_speed = pump.base_speed * random.uniform(1.1, 1.4)
             elif target in valve_names:
                 valve = wn_attack.get_link(target)
+                valve.initial_setting = valve.initial_setting * random.uniform(0.5, 0.8)
                 
         sim_attack = wntr.sim.EpanetSimulator(wn_attack)
         try:

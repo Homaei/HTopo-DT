@@ -14,6 +14,7 @@ class TCNEncoder(nn.Module):
         self.relu = nn.ReLU()
         
     def forward(self, x):
+        assert x.dim() == 3, f"TCNEncoder expects (N, C, T), got {x.shape}"
         x = self.relu(self.conv1(x))
         x = self.relu(self.conv2(x))
         x = torch.mean(x, dim=2) 
@@ -53,25 +54,26 @@ class DynamicWeightedLaplacians(nn.Module):
         W2_inv = 1.0 / (W2 + 1e-6)
         
         temp = self._sparse_diag_mul(self.B1, W1)
-        L0_w = self._sparse_diag_mul(torch.sparse.mm(temp, self.B1.t()), W0_inv)
+        temp_dense = torch.sparse.mm(temp, self.B1.t().to_dense())
+        L0_w = temp_dense * W0_inv.unsqueeze(1)
         
         term1 = self._sparse_diag_mul(self.B1.t(), W0)
-        term1 = torch.sparse.mm(term1, self.B1)
-        term1 = self._sparse_diag_mul(term1, W1_inv) 
+        term1_dense = torch.sparse.mm(term1, self.B1.to_dense())
+        term1 = term1_dense * W1_inv.unsqueeze(1) 
         
         term2 = self._sparse_diag_mul(self.B2, W2)
-        term2 = torch.sparse.mm(term2, self.B2.t())
-        term2 = self._sparse_diag_mul(term2, W1_inv) 
+        term2_dense = torch.sparse.mm(term2, self.B2.t().to_dense())
+        term2 = term2_dense * W1_inv.unsqueeze(1) 
         
         L1_w = term1 + term2
         
         term1_2 = self._sparse_diag_mul(self.B2.t(), W1)
-        term1_2 = torch.sparse.mm(term1_2, self.B2)
-        term1_2 = self._sparse_diag_mul(term1_2, W2_inv)
+        term1_2_dense = torch.sparse.mm(term1_2, self.B2.to_dense())
+        term1_2 = term1_2_dense * W2_inv.unsqueeze(1)
         
         term2_2 = self._sparse_diag_mul(self.B3, W3)
-        term2_2 = torch.sparse.mm(term2_2, self.B3.t())
-        term2_2 = self._sparse_diag_mul(term2_2, W2_inv)
+        term2_2_dense = torch.sparse.mm(term2_2, self.B3.t().to_dense())
+        term2_2 = term2_2_dense * W2_inv.unsqueeze(1)
         
         L2_w = term1_2 + term2_2
         
@@ -88,13 +90,13 @@ class SimplicialMessagePassing(nn.Module):
         self.tri_proj = nn.Linear(tri_dim, tri_dim)
         
     def forward(self, h0, h1, h2, L0_w, L1_w, L2_w):
-        h0_new = self.node_proj(h0) + torch.sparse.mm(L0_w, h0)
+        h0_new = self.node_proj(h0) + torch.mm(L0_w, h0)
         h0_new = F.relu(h0_new)
         
-        h1_new = self.edge_proj(h1) + torch.sparse.mm(L1_w, h1)
+        h1_new = self.edge_proj(h1) + torch.mm(L1_w, h1)
         h1_new = F.relu(h1_new)
         
-        h2_new = self.tri_proj(h2) + torch.sparse.mm(L2_w, h2)
+        h2_new = self.tri_proj(h2) + torch.mm(L2_w, h2)
         h2_new = F.relu(h2_new)
         
         return h0_new, h1_new, h2_new

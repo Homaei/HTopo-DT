@@ -13,7 +13,7 @@ def compute_physics_loss(h0_new, h1_new, curl_edge, A_inc, A_loop, d, nominal_fl
     
     # Term 1: Mass conservation || A_inc @ Q - d ||^2
     # A_inc is nodes x edges
-    mass_residual = torch.sparse.mm(A_inc, Q) - d.unsqueeze(1)
+    mass_residual = torch.sparse.mm(A_inc.to_dense(), Q) - d.unsqueeze(1)
     loss_mass = torch.mean(mass_residual ** 2)
     
     # Term 2: Energy balance || A_loop @ h0_new ||^2
@@ -26,9 +26,9 @@ def compute_physics_loss(h0_new, h1_new, curl_edge, A_inc, A_loop, d, nominal_fl
     # dh = A_inc^T @ h0_new
     # energy_residual = A_loop @ dh
     
-    dh = torch.sparse.mm(A_inc.t(), h0_new) # (E, feat_dim)
-    # If A_loop is (loops x E)
-    energy_residual = torch.sparse.mm(A_loop, dh)
+    h_scalar = h0_new[:, 0:1]                          # (N, 1)
+    dh = torch.sparse.mm(A_inc.t().to_dense(), h_scalar)  # (E, 1)
+    energy_residual = torch.mm(A_loop.to_dense(), dh)     # (loops, 1)
     loss_energy = torch.mean(energy_residual ** 2)
     
     # Term 3: Uncertainty-weighted residual
@@ -36,13 +36,7 @@ def compute_physics_loss(h0_new, h1_new, curl_edge, A_inc, A_loop, d, nominal_fl
     Q_hat = nominal_flows.unsqueeze(1)
     uncertainty_width = (Q_max - Q_min).unsqueeze(1) + epsilon_s
     
-    # Adding the Hodge curl residual effect as instructed by Phase 5:
-    # "The edge-projected version curl_edge is used only for the Hodge residual in L_phys Term 1."
-    # So we add curl_edge to Q before mass conservation, or use it here.
-    # The prompt specifically says "Term 1". We update Term 1:
-    Q_with_curl = Q + curl_edge
-    mass_residual_curl = torch.sparse.mm(A_inc, Q_with_curl) - d.unsqueeze(1)
-    loss_mass = torch.mean(mass_residual_curl ** 2)
+    # (Removed Q_with_curl per Bug 4)
     
     loss_uncertainty = torch.sum(((Q_hat - Q) ** 2) / (uncertainty_width ** 2))
     
