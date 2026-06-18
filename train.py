@@ -13,7 +13,7 @@ def compute_physics_loss(h0_new, h1_new, curl_edge, A_inc, A_loop, d, nominal_fl
     
     # Term 1: Mass conservation || A_inc @ Q - d ||^2
     # A_inc is nodes x edges
-    mass_residual = torch.sparse.mm(A_inc.to_dense(), Q) - d.unsqueeze(1)
+    mass_residual = torch.mm(A_inc.to_dense(), Q) - d.unsqueeze(1)
     loss_mass = torch.mean(mass_residual ** 2)
     
     # Term 2: Energy balance || A_loop @ h0_new ||^2
@@ -27,7 +27,7 @@ def compute_physics_loss(h0_new, h1_new, curl_edge, A_inc, A_loop, d, nominal_fl
     # energy_residual = A_loop @ dh
     
     h_scalar = h0_new[:, 0:1]                          # (N, 1)
-    dh = torch.sparse.mm(A_inc.t().to_dense(), h_scalar)  # (E, 1)
+    dh = torch.mm(A_inc.t().to_dense(), h_scalar)  # (E, 1)
     energy_residual = torch.mm(A_loop.to_dense(), dh)     # (loops, 1)
     loss_energy = torch.mean(energy_residual ** 2)
     
