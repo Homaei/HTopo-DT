@@ -2,6 +2,44 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
+from torch.utils.data import Dataset, DataLoader
+
+class WDNDataset(Dataset):
+    """
+    Dataset wrapper to provide continuous time-series blocks alongside offline topological matrices.
+    """
+    def __init__(self, x_data, y_labels, W0, kappa_nom, phi_2_nom, W3, Q_nom, d_nom):
+        self.x = torch.tensor(x_data, dtype=torch.float32)
+        self.y = torch.tensor(y_labels, dtype=torch.long)
+        self.W0 = W0.clone().detach() if isinstance(W0, torch.Tensor) else torch.tensor(W0, dtype=torch.float32)
+        self.kappa = kappa_nom.clone().detach() if isinstance(kappa_nom, torch.Tensor) else torch.tensor(list(kappa_nom.values()), dtype=torch.float32)
+        self.phi_2 = phi_2_nom.clone().detach() if isinstance(phi_2_nom, torch.Tensor) else (torch.tensor(list(phi_2_nom.values()), dtype=torch.float32) if phi_2_nom else torch.ones(1))
+        self.W3 = W3.clone().detach() if isinstance(W3, torch.Tensor) else torch.tensor(W3, dtype=torch.float32)
+        self.Q_nom = Q_nom.clone().detach() if isinstance(Q_nom, torch.Tensor) else torch.tensor(Q_nom, dtype=torch.float32)
+        self.d_nom = d_nom.clone().detach() if isinstance(d_nom, torch.Tensor) else torch.tensor(d_nom, dtype=torch.float32)
+
+    def __len__(self):
+        return len(self.x)
+
+    def __getitem__(self, idx):
+        return self.x[idx], self.y[idx], self.W0, self.kappa, self.phi_2, self.W3, self.Q_nom, self.d_nom
+
+def wdn_collate_fn(batch):
+    """
+    Collates batches while maintaining identical topological matrices.
+    """
+    x_batch = torch.stack([item[0] for item in batch])
+    y_batch = torch.stack([item[1] for item in batch])
+    
+    # Topology arrays remain constant per batch (copied identical)
+    W0 = batch[0][2]
+    kappa = batch[0][3]
+    phi_2 = batch[0][4]
+    W3 = batch[0][5]
+    Q_nom = batch[0][6]
+    d_nom = batch[0][7]
+    
+    return x_batch, y_batch, W0, kappa, phi_2, W3, Q_nom, d_nom
 
 def compute_physics_loss(h0_new, h1_new, curl_edge, A_inc, A_loop, d, nominal_flows, Q_min, Q_max, epsilon_s=1e-4):
     """
