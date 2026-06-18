@@ -94,13 +94,13 @@ class SimplicialMessagePassing(nn.Module):
         
     def forward(self, h0, h1, h2, L0_w, L1_w, L2_w):
         for l in range(self.num_layers):
-            h0 = self.node_projs[l](h0) + torch.mm(L0_w, h0)
+            h0 = self.node_projs[l](h0) + torch.sparse.mm(L0_w, h0)
             h0 = F.relu(h0)
             
-            h1 = self.edge_projs[l](h1) + torch.mm(L1_w, h1)
+            h1 = self.edge_projs[l](h1) + torch.sparse.mm(L1_w, h1)
             h1 = F.relu(h1)
             
-            h2 = self.tri_projs[l](h2) + torch.mm(L2_w, h2)
+            h2 = self.tri_projs[l](h2) + torch.sparse.mm(L2_w, h2)
             h2 = F.relu(h2)
             
         return h0, h1, h2
